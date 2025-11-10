@@ -1172,3 +1172,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+# Nota: il modello si allena su dataset americani per produrre previsioni sul golfo di Napoli. Nel modello in uso effettivo,
+# i dataset vanno cambiati con dati mediterranei e il nuovo dataset del Golfo di Napoli, considerando coordinate e geofeature.
