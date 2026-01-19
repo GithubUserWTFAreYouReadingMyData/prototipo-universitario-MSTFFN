@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizzazione Dati AIS - Analisi Traffico Navale</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #map {
+            height: 100vh;
+            width: 100vw;
+        }
+        #controlPanel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            width: 300px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        button:hover {
+            background: #34495e;
+        }
+        .stats {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .legend {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            border-radius: 50%;
+        }
+        .vessel-info {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+            max-width: 250px;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1001;
+            display: none;
+        }
+        .proxy-status {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+            padding: 5px;
+            border-radius: 4px;
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="loading">
+    <div style="text-align: center;">
+        <div style="margin-bottom: 10px;">Caricamento dati in corso...</div>
+        <div id="progressText">0%</div>
+        <div style="width: 200px; height: 20px; background: #eee; border-radius: 10px; margin: 10px auto; overflow: hidden;">
+            <div id="progressBar" style="width: 0%; height: 100%; background: #3498db; transition: width 0.3s;"></div>
+        </div>
+        <div id="proxyUsed" style="font-size: 0.8em; margin-top: 10px;"></div>
+    </div>
+</div>
+
+<div id="controlPanel">
+    <h3 style="margin-top: 0; color: #2c3e50;">Controlli Dati AIS</h3>
+
+    <div class="control-group">
+        <label for="dataFile">File Dati AIS:</label>
+        <select id="dataFile">
+            <option value="aisnet_20260117Z120457.csv">17/01/2026 12:04 (55K navi)</option>
+            <option value="aisnet_20260117Z110451.csv">17/01/2026 11:14 (55K navi)</option>
+            <option value="aisnet_20260117Z083441.csv">17/01/2026 08:44 (57K navi)</option>
+            <option value="aisnet_20260116Z135248.csv">16/01/2026 14:02 (68K navi)</option>
+        </select>
+        <button id="loadData">Carica Dati</button>
+        <div class="proxy-status" id="proxyStatus">Proxy: Automatico</div>
+    </div>
+
+    <div class="control-group">
+        <label>Filtri Velocità (nodi):</label>
+        <div style="display: flex; gap: 10px;">
+            <input type="number" id="minSpeed" placeholder="Min" value="0" style="flex: 1;">
+            <input type="number" id="maxSpeed" placeholder="Max" value="50" style="flex: 1;">
+        </div>
+        <button id="applyFilters">Applica Filtri</button>
+    </div>
+
+    <div class="control-group">
+        <label>Visualizzazione:</label>
+        <div>
+            <label><input type="checkbox" id="showDirection" checked> Mostra direzione</label><br>
+            <label><input type="checkbox" id="clusterMarkers" checked> Raggruppa navi vicine</label>
+        </div>
+    </div>
+
+    <div class="stats" id="statsPanel">
+        <strong>Statistiche:</strong><br>
+        Dati non caricati
+    </div>
+
+    <div class="legend">
+        <strong>Legenda Velocità:</strong>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #2ecc71;"></div>
+            <span>0-5 nodi (fermo/manovra)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #3498db;"></div>
+            <span>6-15 nodi (lento)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #e74c3c;"></div>
+            <span>16+ nodi (veloce)</span>
+        </div>
+    </div>
+
+    <div style="margin-top: 15px; font-size: 0.8em; color: #666;">
+        <strong>Soluzione CORS:</strong>
+        <p>Utilizza proxy pubblici per bypassare le restrizioni CORS del server.</p>
+    </div>
+</div>
+
+<script>
+    // Inizializzazione mappa
+    const map = L.map('map').setView([40.8518, 14.2681], 10); // Centro su Napoli
+
+    // Layer mappa
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Layer per i marcatori
+    let vesselMarkers = L.layerGroup().addTo(map);
+    let markerCluster = L.markerClusterGroup();
+
+    // Struttura dati globale per analisi
+    window.aisData = {
+        raw: [],
+        filtered: [],
+        vessels: new Map(),
+        stats: {
+            total: 0,
+            filtered: 0,
+            bySpeedCategory: { slow: 0, medium: 0, fast: 0 }
+        }
+    };
+
+    // Lista di proxy CORS pubblici
+    const corsProxies = [
+        {
+            name: "CORS Proxy",
+            url: (targetUrl) => `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+            requiresHeaders: false
+        },
+        {
+            name: "All Origins",
+            url: (targetUrl) => `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+            requiresHeaders: false,
+            isJson: true
+        }
+    ];
+
+    // Proxy attualmente selezionato
+    let currentProxyIndex = 0;
+
+    // Funzione per ottenere URL attraverso proxy
+    function getProxiedUrl(filename) {
+        const originalUrl = `https://data.meteo.uniparthenope.it/instruments/aisnet0/csv/${filename}`;
+        const proxy = corsProxies[currentProxyIndex];
+        return {
+            url: proxy.url(originalUrl),
+            proxyName: proxy.name,
+            isJson: proxy.isJson || false
+        };
+    }
+
+    // Funzione per mostrare/nascondere loading
+    function showLoading(show) {
+        document.getElementById('loading').style.display = show ? 'block' : 'none';
+    }
+
+    // Funzione per aggiornare progress bar
+    function updateProgress(percent, message) {
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        if (progressBar) progressBar.style.width = percent + '%';
+        if (progressText) progressText.textContent = message || percent + '%';
+    }
+
+    // Funzione per ottenere colore in base alla velocità
+    function getSpeedColor(speed) {
+        if (speed <= 5) return '#2ecc71';
+        if (speed <= 15) return '#3498db';
+        return '#e74c3c';
+    }
+
+    // Creazione marcatore nave
+    function createVesselMarker(vessel) {
+        const icon = L.divIcon({
+            className: 'vessel-marker',
+            html: `
+                    <div style="
+                        width: 20px;
+                        height: 20px;
+                        background: ${getSpeedColor(vessel.speed)};
+                        border-radius: 50%;
+                        border: 2px solid white;
+                        box-shadow: 0 0 5px rgba(0,0,0,0.5);
+                        transform: rotate(${vessel.heading}deg);
+                        position: relative;
+                    ">
+                        <div style="
+                            position: absolute;
+                            top: -10px;
+                            left: 50%;
+                            transform: translateX(-50%);
+                            width: 2px;
+                            height: 10px;
+                            background: black;
+                            display: ${document.getElementById('showDirection') && document.getElementById('showDirection').checked ? 'block' : 'none'}
+                        "></div>
+                    </div>
+                `,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+
+        const marker = L.marker([vessel.lat, vessel.lon], { icon });
+
+        const popupContent = `
+                <div class="vessel-info">
+                    <strong>MMSI:</strong> ${vessel.mmsi}<br>
+                    <strong>Posizione:</strong> ${vessel.lat.toFixed(4)}, ${vessel.lon.toFixed(4)}<br>
+                    <strong>Velocità:</strong> ${vessel.speed.toFixed(1)} nodi<br>
+                    <strong>Rotta:</strong> ${vessel.heading}°<br>
+                    <strong>Timestamp:</strong> ${new Date(vessel.timestamp).toLocaleString()}<br>
+                    <hr>
+                    <small>Clicca per selezionare per analisi</small>
+                </div>
+            `;
+
+        marker.bindPopup(popupContent);
+
+        marker.on('click', function() {
+            console.log('Nave selezionata per analisi:', vessel);
+            window.selectedVessel = vessel;
+
+            const algorithmData = {
+                mmsi: vessel.mmsi,
+                position: [vessel.lat, vessel.lon],
+                speed: vessel.speed,
+                heading: vessel.heading,
+                timestamp: vessel.timestamp,
+                nearbyVessels: findNearbyVessels(vessel, 0.1)
+            };
+            console.log('Dati per algoritmo:', algorithmData);
+        });
+
+        return marker;
+    }
+
+    // Trova navi vicine
+    function findNearbyVessels(vessel, radiusDegrees) {
+        return aisData.filtered.filter(v => {
+            if (v.mmsi === vessel.mmsi) return false;
+            const latDiff = Math.abs(v.lat - vessel.lat);
+            const lonDiff = Math.abs(v.lon - vessel.lon);
+            return latDiff < radiusDegrees && lonDiff < radiusDegrees;
+        });
+    }
+
+    // Parsing CSV migliorato
+    function parseCSV(text) {
+        const lines = text.split('\n');
+        const vessels = [];
+
+        updateProgress(30, 'Parsing dati CSV...');
+
+        // Troviamo la linea che contiene i nomi delle colonne
+        let header = [];
+        let startLine = 0;
+
+        for (let i = 0; i < Math.min(10, lines.length); i++) {
+            if (lines[i].includes('timestamp') || lines[i].includes('MMSI') || lines[i].includes('mmsi')) {
+                header = lines[i].split(',');
+                startLine = i + 1;
+                break;
+            }
+        }
+
+        // Se non troviamo header, assumiamo struttura standard
+        if (header.length === 0) {
+            header = ['timestamp', 'MMSI', 'Lon', 'Lat', 'Heading', 'Speed'];
+            startLine = lines[0].trim() ? 0 : 1;
+        }
+
+        // Normalizza nomi colonne
+        const normalizedHeader = header.map(col => col.trim().toLowerCase().replace(/"/g, ''));
+
+        // Indici delle colonne
+        const timeIndex = normalizedHeader.findIndex(h => h.includes('time') || h.includes('timestamp'));
+        const mmsiIndex = normalizedHeader.findIndex(h => h.includes('mmsi') || h.includes('id'));
+        const lonIndex = normalizedHeader.findIndex(h => h.includes('lon') || h.includes('long'));
+        const latIndex = normalizedHeader.findIndex(h => h.includes('lat'));
+        const headingIndex = normalizedHeader.findIndex(h => h.includes('head'));
+        const speedIndex = normalizedHeader.findIndex(h => h.includes('speed') || h.includes('velocità') || h.includes('velocita'));
+
+        // Parsing linee dati
+        let lineCount = 0;
+        for (let i = startLine; i < lines.length; i++) {
+            if (!lines[i].trim() || lines[i].startsWith('#')) continue;
+
+            // Gestione CSV con potenziali virgole nei campi
+            let parts = [];
+            let current = '';
+            let insideQuotes = false;
+
+            for (let char of lines[i]) {
+                if (char === '"') {
+                    insideQuotes = !insideQuotes;
+                } else if (char === ',' && !insideQuotes) {
+                    parts.push(current.trim().replace(/"/g, ''));
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            parts.push(current.trim().replace(/"/g, ''));
+
+            if (parts.length < 4) continue;
+
+            const vessel = {
+                timestamp: timeIndex >= 0 ? parts[timeIndex] : new Date().toISOString(),
+                mmsi: mmsiIndex >= 0 ? parts[mmsiIndex] : `UNK_${i}`,
+                lon: lonIndex >= 0 ? parseFloat(parts[lonIndex]) : 0,
+                lat: latIndex >= 0 ? parseFloat(parts[latIndex]) : 0,
+                heading: headingIndex >= 0 ? parseFloat(parts[headingIndex]) || 0 : 0,
+                speed: speedIndex >= 0 ? parseFloat(parts[speedIndex]) || 0 : 0
+            };
+
+            // Validazione coordinate
+            if (!isNaN(vessel.lat) && !isNaN(vessel.lon) &&
+                vessel.lat >= -90 && vessel.lat <= 90 &&
+                vessel.lon >= -180 && vessel.lon <= 180) {
+                vessels.push(vessel);
+            }
+
+            lineCount++;
+            if (lineCount % 1000 === 0) {
+                updateProgress(30 + (i / lines.length * 50), `Processate ${lineCount} navi...`);
+            }
+        }
+
+        updateProgress(80, `Parsing completato: ${vessels.length} navi`);
+        return vessels;
+    }
+
+    // Funzione per provare il proxy successivo in caso di errore
+    async function tryNextProxy(filename) {
+        currentProxyIndex = (currentProxyIndex + 1) % corsProxies.length;
+        const proxyStatus = document.getElementById('proxyStatus');
+        if (proxyStatus) {
+            proxyStatus.textContent = `Proxy: ${corsProxies[currentProxyIndex].name} (fallback ${currentProxyIndex + 1}/${corsProxies.length})`;
+            proxyStatus.style.background = '#fff3cd';
+            proxyStatus.style.color = '#856404';
+        }
+
+        return await loadWithCurrentProxy(filename);
+    }
+
+    // Caricamento dati con il proxy corrente
+    async function loadWithCurrentProxy(filename) {
+        const { url, proxyName, isJson } = getProxiedUrl(filename);
+        const proxyUsed = document.getElementById('proxyUsed');
+        if (proxyUsed) proxyUsed.textContent = `Usando proxy: ${proxyName}`;
+
+        try {
+            updateProgress(10, `Connessione via ${proxyName}...`);
+            console.log(`Tentativo di caricamento con proxy: ${proxyName}`);
+            console.log(`URL: ${url}`);
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // Timeout di 30 secondi
+
+            const options = {
+                signal: controller.signal,
+                headers: {}
+            };
+
+            const response = await fetch(url, options);
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`Errore HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            updateProgress(20, 'Download dati...');
+
+            let data;
+            if (isJson) {
+                // Il proxy restituisce JSON con il contenuto in un campo 'contents'
+                const proxyResponse = await response.json();
+                data = proxyResponse.contents;
+            } else {
+                data = await response.text();
+            }
+
+            if (!data || data.trim().length === 0) {
+                throw new Error('Il file è vuoto o non contiene dati validi');
+            }
+
+            return data;
+
+        } catch (error) {
+            console.error(`Errore con proxy ${proxyName}:`, error);
+            throw error;
+        }
+    }
+
+    // Caricamento dati CSV con gestione errori e fallback
+    async function loadAISData(filename) {
+        showLoading(true);
+        updateProgress(0, 'Preparazione...');
+
+        try {
+            let csvText;
+            let attempts = 0;
+            const maxAttempts = corsProxies.length;
+
+            while (attempts < maxAttempts) {
+                try {
+                    csvText = await loadWithCurrentProxy(filename);
+                    break; // Successo, esci dal ciclo
+                } catch (error) {
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        updateProgress(5, `Problema con proxy, tentativo ${attempts + 1}/${maxAttempts}...`);
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // Pausa breve
+                        continue; // Prova il proxy successivo
+                    } else {
+                        throw error; // Tutti i proxy hanno fallito
+                    }
+                }
+            }
+
+            updateProgress(25, 'Elaborazione dati...');
+            aisData.raw = parseCSV(csvText);
+
+            console.log(`Dati caricati: ${aisData.raw.length} navi`);
+
+            if (aisData.raw.length === 0) {
+                throw new Error('Nessun dato valido trovato nel file CSV');
+            }
+
+            updateProgress(90, 'Aggiornamento mappa...');
+            applyFilters();
+
+            // Aggiorna stato proxy a successo
+            const proxyStatus = document.getElementById('proxyStatus');
+            if (proxyStatus) {
+                proxyStatus.textContent = `Proxy: ${corsProxies[currentProxyIndex].name} ✓`;
+                proxyStatus.style.background = '#d4edda';
+                proxyStatus.style.color = '#155724';
+            }
+
+            showLoading(false);
+
+        } catch (error) {
+            console.error('Errore dettagliato:', error);
+            showLoading(false);
+
+            // Messaggio di errore specifico
+            let errorMessage = `Errore nel caricamento: ${error.message}`;
+
+            if (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.message.includes('network')) {
+                errorMessage += '\n\nTutti i proxy CORS hanno fallito. Prova a:';
+                errorMessage += '\n1. Verificare la connessione internet';
+                errorMessage += '\n2. Disabilitare le estensioni del browser che bloccano CORS';
+                errorMessage += '\n3. Usare un server proxy locale (come descritto precedentemente)';
+            }
+
+            alert(errorMessage);
+
+            // Carica dati di esempio per testing
+            if (confirm('Caricare dati di esempio per continuare?')) {
+                loadSampleData();
+            }
+        }
+    }
+
+    // Dati di esempio per testing
+    function loadSampleData() {
+        console.log('Caricamento dati di esempio...');
+
+        // Genera dati di esempio intorno a Napoli
+        aisData.raw = [];
+        const baseLat = 40.8518;
+        const baseLon = 14.2681;
+
+        for (let i = 0; i < 150; i++) {
+            aisData.raw.push({
+                timestamp: '2026-01-17T12:00:00Z',
+                mmsi: `247${100000 + i}`,
+                lon: baseLon + (Math.random() - 0.5) * 0.5,
+                lat: baseLat + (Math.random() - 0.5) * 0.3,
+                heading: Math.random() * 360,
+                speed: Math.random() * 30
+            });
+        }
+
+        applyFilters();
+    }
+
+    // Applicazione filtri
+    function applyFilters() {
+        const minSpeed = parseFloat(document.getElementById('minSpeed').value) || 0;
+        const maxSpeed = parseFloat(document.getElementById('maxSpeed').value) || 100;
+
+        aisData.filtered = aisData.raw.filter(vessel =>
+            vessel.speed >= minSpeed && vessel.speed <= maxSpeed
+        );
+
+        updateStatistics();
+        updateMapDisplay();
+    }
+
+    // Aggiorna statistiche
+    function updateStatistics() {
+        aisData.stats.total = aisData.raw.length;
+        aisData.stats.filtered = aisData.filtered.length;
+
+        aisData.stats.bySpeedCategory = {
+            slow: aisData.filtered.filter(v => v.speed <= 5).length,
+            medium: aisData.filtered.filter(v => v.speed > 5 && v.speed <= 15).length,
+            fast: aisData.filtered.filter(v => v.speed > 15).length
+        };
+
+        const statsPanel = document.getElementById('statsPanel');
+        if (statsPanel) {
+            statsPanel.innerHTML = `
+                    <strong>Statistiche:</strong><br>
+                    Totale navi: ${aisData.stats.total}<br>
+                    Navi visualizzate: ${aisData.stats.filtered}<br>
+                    Per velocità:<br>
+                    • 0-5 nodi: ${aisData.stats.bySpeedCategory.slow}<br>
+                    • 6-15 nodi: ${aisData.stats.bySpeedCategory.medium}<br>
+                    • 16+ nodi: ${aisData.stats.bySpeedCategory.fast}
+                `;
+        }
+    }
+
+    // Aggiorna visualizzazione mappa
+    function updateMapDisplay() {
+        // Rimuovi marcatori esistenti
+        vesselMarkers.clearLayers();
+        markerCluster.clearLayers();
+
+        // Crea nuovi marcatori
+        const markers = aisData.filtered.map(createVesselMarker);
+
+        if (document.getElementById('clusterMarkers') && document.getElementById('clusterMarkers').checked && markers.length > 100) {
+            // Usa clustering per grandi dataset
+            markers.forEach(m => markerCluster.addLayer(m));
+            map.addLayer(markerCluster);
+        } else {
+            // Aggiungi marcatori individuali
+            markers.forEach(m => vesselMarkers.addLayer(m));
+            map.addLayer(vesselMarkers);
+        }
+
+        // Aggiusta zoom se ci sono dati
+        if (aisData.filtered.length > 0) {
+            const bounds = L.latLngBounds(aisData.filtered.map(v => [v.lat, v.lon]));
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+        }
+    }
+
+    // *** CORREZIONE PRINCIPALE: Attendi che il DOM sia caricato ***
+    document.addEventListener('DOMContentLoaded', function() {
+        // Gestione eventi UI - solo dopo che il DOM è pronto
+        const loadDataBtn = document.getElementById('loadData');
+        const applyFiltersBtn = document.getElementById('applyFilters');
+        const showDirectionCb = document.getElementById('showDirection');
+        const clusterMarkersCb = document.getElementById('clusterMarkers');
+
+        if (loadDataBtn) {
+            loadDataBtn.addEventListener('click', () => {
+                const filename = document.getElementById('dataFile').value;
+                loadAISData(filename);
+            });
+        } else {
+            console.error('Elemento #loadData non trovato!');
+        }
+
+        if (applyFiltersBtn) {
+            applyFiltersBtn.addEventListener('click', applyFilters);
+        } else {
+            console.error('Elemento #applyFilters non trovato!');
+        }
+
+        if (showDirectionCb) {
+            showDirectionCb.addEventListener('change', updateMapDisplay);
+        }
+
+        if (clusterMarkersCb) {
+            clusterMarkersCb.addEventListener('change', updateMapDisplay);
+        }
+
+        // Carica dati all'avvio
+        setTimeout(() => {
+            const filename = document.getElementById('dataFile').value;
+            if (filename) {
+                loadAISData(filename);
+            }
+        }, 1000);
+    });
+
+    // Gestione errori migliorata
+    window.addEventListener('error', function(e) {
+        console.error('Errore JavaScript:', e.error);
+    });
+</script>
+</body>
+</html>
